@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Document Assistant</title>
+<style>
+  :root { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #1c2230; background: #f5f6f9; }
+  body { margin: 0; } main { max-width: 860px; margin: 0 auto; padding: 32px 20px 60px; }
+  h1 { margin: 0 0 4px; } .muted { color: #5c6577; }
+  section { background: #fff; border: 1px solid #dfe3ea; border-radius: 12px; padding: 18px; margin-top: 18px; }
+  h2 { margin: 0 0 12px; font-size: 17px; }
+  input, textarea, button { font: inherit; } textarea { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #c8cfda; border-radius: 8px; resize: vertical; }
+  button { cursor: pointer; border: 0; border-radius: 8px; padding: 9px 16px; background: #3747a8; color: #fff; font-weight: 600; }
+  button.link { background: none; color: #a3261b; padding: 2px 6px; font-weight: 500; }
+  button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 3px solid #93a5ff; outline-offset: 2px; }
+  ul { padding-left: 18px; } li { margin: 4px 0; }
+  .answer { white-space: pre-wrap; font-size: 17px; line-height: 1.6; }
+  .source { border-left: 3px solid #c8cfda; padding: 4px 12px; margin: 10px 0; font-size: 14px; color: #3d4556; }
+  .tag { font-size: 12px; background: #eef0f7; border-radius: 999px; padding: 2px 8px; margin-left: 6px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Document Assistant</h1>
+  <p class="muted">Ask questions about your documents. Answers cite the passages they come from.</p>
+
+  <section aria-labelledby="ask-h">
+    <h2 id="ask-h">Ask a question</h2>
+    <form id="ask">
+      <label for="q" class="muted">Question</label>
+      <textarea id="q" rows="2" required minlength="3" maxlength="500">How many days a week can I work remotely?</textarea>
+      <div class="row"><button type="submit">Ask</button><span id="status" class="muted" role="status"></span></div>
+    </form>
+    <div id="result" aria-live="polite"></div>
+  </section>
+
+  <section aria-labelledby="docs-h">
+    <h2 id="docs-h">Documents</h2>
+    <ul id="docs"></ul>
+    <form id="upload" class="row">
+      <label for="file" class="muted">Add a .md, .txt or .pdf file (up to 2 MB)</label>
+      <input id="file" type="file" accept=".md,.txt,.pdf" required>
+      <button type="submit">Upload</button>
+    </form>
+  </section>
+</main>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+async function loadDocs() {
+  const docs = await fetch("/api/documents").then((r) => r.json());
+  $("#docs").innerHTML = docs.length
+    ? docs.map((d) => `<li>${esc(d.filename)} <span class="tag">${d.chunks} chunks</span>
+        <button class="link" data-id="${d.id}" aria-label="Delete ${esc(d.filename)}">Delete</button></li>`).join("")
+    : "<li class='muted'>No documents yet.</li>";
+}
+
+$("#docs").addEventListener("click", async (e) => {
+  const id = e.target.dataset?.id;
+  if (id) { await fetch(`/api/documents/${id}`, { method: "DELETE" }); loadDocs(); }
+});
+
+$("#upload").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const body = new FormData(); body.append("file", $("#file").files[0]);
+  const res = await fetch("/api/documents", { method: "POST", body });
+  if (!res.ok) alert((await res.json()).detail ?? "Upload failed");
+  e.target.reset(); loadDocs();
+});
+
+$("#ask").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("#status").textContent = "Searching…";
+  const res = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question: $("#q").value }) });
+  const data = await res.json();
+  $("#status").textContent = "";
+  if (!res.ok) { $("#result").innerHTML = `<p>${esc(data.detail?.[0]?.msg ?? "Request failed")}</p>`; return; }
+  $("#result").innerHTML = `<p class="answer">${esc(data.answer)}</p>` +
+    (data.sources.length ? `<h2>Sources <span class="tag">${data.mode}</span></h2>` : "") +
+    data.sources.map((s) => `<div class="source"><strong>[${s.n}] ${esc(s.document)}</strong><br>${esc(s.text)}</div>`).join("");
+});
+
+loadDocs();
+</script>
+</body>
+</html>
